@@ -140,7 +140,7 @@ def main() -> int:
     source = os.path.expanduser('~/.claude.json')
     full = json.load(open(source)) if os.path.exists(source) else {}
     cfg = {k: full[k] for k in ('oauthAccount', 'userID', 'machineID') if k in full}  # only what a fresh HOME needs to be signed in
-    cfg.update({'hasCompletedOnboarding': True, 'theme': 'dark', 'projects': {work: {'hasTrustDialogAccepted': True, 'hasCompletedProjectOnboarding': True}}})
+    cfg.update({'hasCompletedOnboarding': True, 'theme': 'dark', 'projects': {k: {'hasTrustDialogAccepted': True, 'hasCompletedProjectOnboarding': True} for k in {work, work.replace(os.sep, '/')}}})  # claude keys projects by forward-slash paths on Windows
     fd = os.open(os.path.join(home, '.claude.json'), os.O_WRONLY | os.O_CREAT, 0o600)
     with os.fdopen(fd, 'w') as f:
         json.dump(cfg, f)
