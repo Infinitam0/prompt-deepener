@@ -11,6 +11,16 @@ Deepen a prompt before you send it. An Improve button above the prompt (chord `c
 - **Chord:** bind `ctrl+x d` in `~/.claude/keybindings.json`, see below.
 - **Settings:** `improverText` (defaults to the original deeper-not-bigger text).
 
+## Install
+
+From a terminal (Claude Code 2.1.275 or later), at user scope so it loads in terminal and desktop-app sessions:
+
+```
+/plugin install prompt-deepener --marketplace Infinitam0/prompt-deepener
+```
+
+The repo is private, so the machine needs a git credential for GitHub. In the desktop app: + > Plugins > Add marketplace (`Infinitam0/prompt-deepener`) > Add plugin. Start a new session afterwards.
+
 ## Keybinding
 
 A mod cannot define its own chord. The Improve button borrows the engine action `app:diffFileListDown`, which nothing handles at the prompt. Add to `~/.claude/keybindings.json` (merge into an existing `Global` block if you have one):

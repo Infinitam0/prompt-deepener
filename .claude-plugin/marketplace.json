@@ -1,0 +1,7 @@
+{
+  "name": "prompt-deepener-marketplace",
+  "owner": { "name": "Sytze" },
+  "plugins": [
+    { "name": "prompt-deepener", "source": "./", "description": "Offers to run each prompt through a deeper-not-bigger improver before sending." }
+  ]
+}
