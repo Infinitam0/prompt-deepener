@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
+import { mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { DEFAULT_IMPROVER_TEXT } from './deepen'
@@ -44,13 +45,15 @@ function world(on: On, opts: Opts = {}) {
     }
     return r
   })
-  on('model.fork', (_$, e) => {
+  const signals: AbortSignal[] = []
+  on('model.fork', async (_$, e) => {
     requests.push(e.prompt)
-    return { value: opts.fork ? opts.fork() : { isAnswered: true, text: REPLY, usage: {} } } as never
+    return { value: await (opts.fork ? opts.fork() : { isAnswered: true, text: REPLY, usage: {} }) } as never
   })
-  on('model.complete', (_$, e) => {
+  on('model.complete', async (_$, e, next) => {
     completions.push(typeof e.prompt === 'string' ? e.prompt : '')
-    return { value: opts.complete ? opts.complete() : { isAnswered: true, text: REPLY, usage: {} } } as never
+    signals.push(next.signal)
+    return { value: await (opts.complete ? opts.complete() : { isAnswered: true, text: REPLY, usage: {} }) } as never
   })
   on('session.model', () => ({ value: 'sonnet' }))
   on('ui.toast', (_$, e) => {
@@ -59,7 +62,7 @@ function world(on: On, opts: Opts = {}) {
   })
   on('ui.log', () => ({ value: undefined }))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
-  return { box, requests, completions, toasts, fills }
+  return { box, requests, completions, toasts, fills, signals }
 }
 
 describe('Improve', () => {
@@ -235,5 +238,97 @@ describe('Restore original', () => {
     expect(await ui.find({ key: 'restore' })).toBeDefined()
     await $.prompt.submit(typed('go'))
     expect(await ui.find({ key: 'restore' })).toBeUndefined()
+  })
+})
+
+/** A model call the test answers when it likes. */
+function held() {
+  let release: (value: unknown) => void = () => {}
+  const promise = new Promise(resolve => {
+    release = resolve
+  })
+  return { promise, release }
+}
+
+describe('while deepening runs', () => {
+  for (const surface of SURFACES) test(`the band shows deepening… and Cancel, not Improve; sending is refused (${surface})`, async ($, on) => {
+    const gate = held()
+    const w = world(on, { fork: () => gate.promise })
+    mock.clock(on)
+    await $.prompt.submit(typed('reset'))
+    {
+      const ui = await $.ui.mount({ ...BAND, surface })
+      const pressed = ui.press({ key: 'improve' })
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(await ui.find({ type: 'Text', text: /deepening…/ })).toBeDefined()
+      expect(await ui.find({ key: 'cancel' })).toBeDefined()
+      expect(await ui.find({ key: 'improve' })).toBeUndefined()
+      const sent = await $.prompt.submit(typed('go on'))
+      expect(sent).toMatchObject({ drop: 'Deepening in progress, Cancel first.' })
+      await ui.press({ key: 'cancel' })
+      gate.release({ isAnswered: true, text: REPLY, usage: {} })
+      await pressed
+      await ui.unmount()
+    }
+    expect(w.box.text).toBe('fix the bug')
+  })
+
+  test('Cancel returns at once with the draft unchanged; a result arriving later changes nothing', async ($, on) => {
+    const gate = held()
+    const w = world(on, { fork: () => gate.promise })
+    mock.clock(on)
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    const pressed = ui.press({ key: 'improve' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await ui.press({ key: 'cancel' })
+    expect((await ui.find({ key: 'improve' }))?.text).toBe('Improve')
+    expect(w.box.text).toBe('fix the bug')
+    gate.release({ isAnswered: true, text: REPLY, usage: {} })
+    await pressed
+    expect(w.box.text).toBe('fix the bug')
+    expect(await ui.find({ type: 'Text', text: /ship the audit/ })).toBeUndefined()
+    expect(w.toasts).toHaveLength(0)
+    const sent = await $.prompt.submit(typed('now it sends'))
+    expect(sent).toMatchObject({ text: 'now it sends' })
+  })
+
+  test('Cancel aborts the plain-completion fallback for real', async ($, on) => {
+    const gate = held()
+    const w = world(on, { fork: () => ({ isAnswered: false, reason: 'nothing-to-fork' }), complete: () => gate.promise })
+    mock.clock(on)
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const pressed = ui.press({ key: 'improve' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(w.signals[0]?.aborted).toBe(false)
+    await ui.press({ key: 'cancel' })
+    expect(w.signals[0]?.aborted).toBe(true)
+    gate.release({ isAnswered: true, text: REPLY, usage: {} })
+    await pressed
+    expect(w.box.text).toBe('fix the bug')
+  })
+
+  for (const surface of SURFACES) test(`after 90 seconds: toast timed out, draft unchanged, late result discarded (${surface})`, async ($, on) => {
+    {
+      const gate = held()
+      const w = world(on, { fork: () => gate.promise })
+      const clock = mock.clock(on)
+      await $.prompt.submit(typed('reset'))
+      const ui = await $.ui.mount({ ...BAND, surface })
+      const pressed = ui.press({ key: 'improve' })
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await clock.advance(89_000)
+      expect(w.toasts).toHaveLength(0)
+      await clock.advance(1_000)
+      await pressed
+      expect(w.toasts.at(-1)).toMatch(/timed out after 90 seconds/)
+      expect(w.box.text).toBe('fix the bug')
+      gate.release({ isAnswered: true, text: REPLY, usage: {} })
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(w.box.text).toBe('fix the bug')
+      expect(await ui.find({ type: 'Text', text: /ship the audit/ })).toBeUndefined()
+      await ui.unmount()
+    }
   })
 })

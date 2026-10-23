@@ -1,7 +1,7 @@
 import type { Register } from 'claude-code'
 
 import { DEFAULT_IMPROVER_TEXT } from './deepen'
-import { improve, readBand, reset, restore } from './flow'
+import { cancel, improve, readBand, reset, restore } from './flow'
 
 /** Borrowed so the chord the person binds to it (ctrl+x d, see the README) presses Improve at the prompt. */
 const CHORD_ACTION = 'app:diffFileListDown'
@@ -10,6 +10,8 @@ export const register: Register = (on, options) => {
   const improverText = typeof options.improverText === 'string' && options.improverText.trim() !== '' ? options.improverText : DEFAULT_IMPROVER_TEXT
 
   on('prompt.submit', async ($, e, next) => {
+    const isOwn = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    if (isOwn && (await readBand($)).kind === 'deepening') return { drop: 'Deepening in progress, Cancel first.' }
     await reset($)
     return next(e)
   })
@@ -27,7 +29,8 @@ export const register: Register = (on, options) => {
     if (state.kind === 'deepening') {
       return (
         <Box>
-          <Text key="status">deepening…</Text>
+          <Text key="status">deepening… </Text>
+          <Button key="cancel" label="Cancel" onPress={() => cancel($)} />
         </Box>
       )
     }

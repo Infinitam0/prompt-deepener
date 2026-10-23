@@ -36,14 +36,14 @@ function describeNoReply(r: { reason: string; status?: number | null; error?: st
  * Runs the original prompt through the improver text as a side call over the session's transcript;
  * with no transcript yet (a fresh session, after /clear) as a plain completion on the prompt alone.
  */
-export async function deepen($: EngineInterface, improverText: string, original: string): Promise<Deepening> {
+export async function deepen($: EngineInterface, improverText: string, original: string, signal?: AbortSignal): Promise<Deepening> {
   const prompt = buildRequest(improverText, original)
   const forked = await $.model.fork({ prompt })
   let text: string
   if (forked.isAnswered) {
     text = forked.text
   } else if (forked.reason === 'nothing-to-fork') {
-    const completed = await $.model.complete({ model: await $.session.model(), prompt, maxTokens: 8192 })
+    const completed = await $.model.complete({ model: await $.session.model(), prompt, maxTokens: 8192 }, { signal })
     if (!completed.isAnswered) return failure(describeNoReply(completed))
     text = completed.text
   } else {
@@ -57,6 +57,20 @@ function settled(current: Band): Settled {
   return current.kind === 'idle' || current.kind === 'deepened' ? current : current.previous
 }
 
+const DEEPEN_TIMEOUT_MS = 90_000
+
+/** The deepening in flight: which one counts, and the signal that stops its timer and its completion. */
+const run = { id: 0, controller: null as AbortController | null }
+
+/** Cancel: the band goes back at once and the draft is as it was; a result arriving later changes nothing. */
+export async function cancel($: EngineInterface): Promise<void> {
+  const current = await read($, band)
+  if (current.kind !== 'deepening') return
+  run.id += 1
+  run.controller?.abort()
+  await update($, band, (): Band => current.previous)
+}
+
 /** Improve: deepens the draft and puts the deepened prompt in its place. Nothing is sent. */
 export async function improve($: EngineInterface, improverText: string): Promise<void> {
   const current = await read($, band)
@@ -66,7 +80,19 @@ export async function improve($: EngineInterface, improverText: string): Promise
 
   const previous = settled(current)
   await update($, band, (): Band => ({ kind: 'deepening', text: draft, previous }))
-  const result = await deepen($, improverText, draft)
+
+  // `$.model.fork` takes no abort signal, so a cancelled or timed-out deepening is left to finish and its result discarded;
+  // only the plain-completion fallback is really aborted.
+  const mine = ++run.id
+  const controller = new AbortController()
+  run.controller = controller
+  const timeout = $.clock.sleep(DEEPEN_TIMEOUT_MS, { signal: controller.signal }).then(
+    (): Deepening => failure(`timed out after ${DEEPEN_TIMEOUT_MS / 1000} seconds`),
+    () => new Promise<never>(() => {}),
+  )
+  const result = await Promise.race([deepen($, improverText, draft, controller.signal), timeout])
+  controller.abort()
+  if (mine !== run.id) return
   if (!result.isOk) return fail($, result.reason, previous)
 
   const filled = await $.prompt.fill({ text: result.deepenedPrompt, mode: 'replace' })
