@@ -18,6 +18,14 @@ export const OUTPUT_FORMAT = [
   'Do not carry out the task itself.',
 ].join('\n')
 
+/** For the turn that replaces a fill the draft box cannot take: the main model answers in the chat, readable, and stops. */
+export const REPLY_FORMAT = [
+  'Reply with exactly two parts and write nothing else. Write everything in the language of the original prompt.',
+  'Part 1, the deepening: four numbered answers to (1) to (4), each at most 3 lines.',
+  'Part 2, the deepened prompt: the rewritten prompt, ready to send, in one fenced block.',
+  'Then stop. Do not carry out the task itself, do not use any tools, and wait until I send the deepened prompt or say "go".',
+].join('\n')
+
 export const MAX_ANSWER_LINES = 3
 
 export type Answers = [string, string, string, string]
@@ -30,6 +38,12 @@ export type Parsed =
 export function buildRequest(improverText: string, originalPrompt: string): string {
   const improver = improverText.trim() === '' ? DEFAULT_IMPROVER_TEXT : improverText.trim()
   return `${improver}\n\n${OUTPUT_FORMAT}\n\nOriginal prompt:\n${originalPrompt}`
+}
+
+/** The turn submitted where the draft cannot be filled: improver text, reply format, original prompt, and a stop. */
+export function buildReplyAndStopRequest(improverText: string, originalPrompt: string): string {
+  const improver = improverText.trim() === '' ? DEFAULT_IMPROVER_TEXT : improverText.trim()
+  return `${improver}\n\n${REPLY_FORMAT}\n\nOriginal prompt:\n${originalPrompt}`
 }
 
 function tag(text: string, name: string): string | null {

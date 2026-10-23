@@ -1,7 +1,7 @@
 import type { Register } from 'claude-code'
 
-import { DEFAULT_IMPROVER_TEXT } from './deepen'
-import { cancel, improve, readBand, reset, restore } from './flow'
+import { DEFAULT_IMPROVER_TEXT, buildReplyAndStopRequest } from './deepen'
+import { cancel, improve, probeFill, putInDraft, readBand, reset, restore, startDeepening } from './flow'
 
 /** Borrowed so the chord the person binds to it (ctrl+x d, see the README) presses Improve at the prompt. */
 const CHORD_ACTION = 'app:diffFileListDown'
@@ -12,6 +12,18 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     const isOwn = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     if (isOwn && (await readBand($)).kind === 'deepening') return { drop: 'Deepening in progress, Cancel first.' }
+
+    // `++ prompt` typed by the person: deepen it as if Improve were pressed, and send nothing.
+    const marked = isOwn && e.command === undefined && e.isMeta === undefined ? /^\+\+\s*([\s\S]*\S)/.exec(e.text) : null
+    if (marked !== null) {
+      const text = marked[1]!
+      // Where the box takes no text (a thread) the main model gets the request as this turn and stops after answering.
+      if ((await probeFill($)) === 'no_composer') return next({ ...e, text: buildReplyAndStopRequest(improverText, text) })
+      // Started unawaited: a hook that awaits a model call inside the turn's own chain can hang the session.
+      void startDeepening($, improverText, text, e.text, true)
+      return { drop: 'Deepening your prompt…' }
+    }
+
     await reset($)
     return next(e)
   })
@@ -39,6 +51,7 @@ export const register: Register = (on, options) => {
         <Box>
           <Text key="status">{`deepened ×${state.count} `}</Text>
           {improveButton('Deepen again')}
+          {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => putInDraft($)} />}
           <Button key="restore" label="Restore original" onPress={() => restore($)} />
           <Text key="answers" dimColor>{`\n${state.answers.map((answer, i) => `${i + 1}. ${answer}`).join('\n')}`}</Text>
         </Box>

@@ -332,3 +332,97 @@ describe('while deepening runs', () => {
     }
   })
 })
+
+const settle = () => new Promise(resolve => setTimeout(resolve, 25))
+
+describe('the ++ marker', () => {
+  test('++ text from the person is dropped, the text is deepened, the deepened prompt fills the draft', async ($, on) => {
+    const w = world(on, { draft: '' })
+    const sent = await $.prompt.submit(typed('++ plan my launch'))
+    expect(sent).toMatchObject({ drop: expect.any(String) })
+    await settle()
+    expect(w.requests).toHaveLength(1)
+    expect(w.requests[0]!.endsWith('Original prompt:\nplan my launch')).toBe(true)
+    expect(w.requests[0]!).not.toContain('++')
+    expect(w.box.text).toMatch(/^Audit the logs/)
+    expect(w.box.text).not.toContain('++')
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await ui.find({ key: 'restore' })).toBeDefined()
+  })
+
+  test('++ with no space and with several lines is read the same way', async ($, on) => {
+    const w = world(on, { draft: '' })
+    await $.prompt.submit(typed('++plan\nmy launch'))
+    await settle()
+    expect(w.requests[0]!.endsWith('Original prompt:\nplan\nmy launch')).toBe(true)
+  })
+
+  test('a failed ++ deepening puts what was typed back in the draft and toasts', async ($, on) => {
+    const w = world(on, { draft: '', fork: () => ({ isAnswered: false, reason: 'empty-reply', usage: {} }) })
+    await $.prompt.submit(typed('++ plan my launch'))
+    await settle()
+    expect(w.box.text).toBe('++ plan my launch')
+    expect(w.toasts.at(-1)).toMatch(/Deepening failed/)
+  })
+
+  test('Cancel on a ++ deepening puts what was typed back', async ($, on) => {
+    const gate = held()
+    const w = world(on, { draft: '', fork: () => gate.promise })
+    mock.clock(on)
+    await $.prompt.submit(typed('++ plan my launch'))
+    await settle()
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await ui.press({ key: 'cancel' })
+    expect(w.box.text).toBe('++ plan my launch')
+    gate.release({ isAnswered: true, text: REPLY, usage: {} })
+    await settle()
+    expect(w.box.text).toBe('++ plan my launch')
+  })
+
+  const PASSES: [string, Record<string, unknown>][] = [
+    ['a slash command', { text: '++ x', command: { name: 'review', args: '++ x' } }],
+    ['an isMeta prompt', { text: '++ x', isMeta: true }],
+    ['a peer', { text: '++ x', origin: { kind: 'peer' } }],
+    ['a plugin', { text: '++ x', origin: { kind: 'plugin', plugin: 'other' } }],
+    ['a notification', { text: '++ x', origin: { kind: 'task-notification' } }],
+    ['++ with nothing after it', { text: '++' }],
+    ['++ with only spaces after it', { text: '++   ' }],
+    ['++ in the middle', { text: 'a ++ b' }],
+    ['++ at the end', { text: 'do it ++' }],
+    ['a single +', { text: '+ plan' }],
+  ]
+  for (const [name, input] of PASSES) {
+    test(`passes through unchanged: ${name}`, async ($, on) => {
+      const w = world(on)
+      const sent = await $.prompt.submit({ ...typed('x'), ...input } as never)
+      await settle()
+      expect(sent).toMatchObject({ text: input.text })
+      expect(w.requests).toHaveLength(0)
+      expect(w.completions).toHaveLength(0)
+    })
+  }
+})
+
+// The `no_composer` refusal cannot be staged here: the test kit strips a cause a hook writes itself, as the engine does.
+// That branch is proven for real, in a headless session where no box exists, by e2e/fallback.e2e.sh.
+describe('when the draft box cannot be filled', () => {
+  test('on a refusal that names no cause: a toast says to close it, the band keeps the result and offers Put in draft, which fills it later', async ($, on) => {
+    let isDialogUp = true
+    const w = world(on, { fill: () => (isDialogUp ? { isFilled: false, refusal: 'dialog' } : { isFilled: true }) })
+    for (const surface of SURFACES) {
+      isDialogUp = true
+      w.box.text = 'fix the bug'
+      await $.prompt.submit(typed('reset'))
+      const ui = await $.ui.mount({ ...BAND, surface })
+      await ui.press({ key: 'improve' })
+      expect(w.toasts.at(-1)).toMatch(/close it, then press Put in draft/)
+      expect(w.box.text).toBe('fix the bug')
+      expect(await ui.find({ type: 'Text', text: /ship the audit/ })).toBeDefined()
+      isDialogUp = false
+      await ui.press({ key: 'put' })
+      expect(w.box.text).toMatch(/^Audit the logs/)
+      expect(await ui.find({ key: 'put' })).toBeUndefined()
+      await ui.unmount()
+    }
+  })
+})

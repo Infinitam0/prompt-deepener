@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DEFAULT_IMPROVER_TEXT, OUTPUT_FORMAT, buildRequest, cutLines, describeFailure, parseReply } from './deepen'
+import { DEFAULT_IMPROVER_TEXT, OUTPUT_FORMAT, buildReplyAndStopRequest, buildRequest, cutLines, describeFailure, parseReply } from './deepen'
 
 const reply = (answers: string[], prompt: string) =>
   `${answers.map((a, i) => `<answer-${i + 1}>${a}</answer-${i + 1}>`).join('\n')}\n<deepened-prompt>${prompt}</deepened-prompt>`
@@ -66,5 +66,20 @@ describe('parseReply', () => {
 describe('cutLines', () => {
   test('drops blank lines before cutting', () => {
     expect(cutLines('a\n\n\nb\nc\nd')).toBe('a\nb\nc')
+  })
+})
+
+describe('buildReplyAndStopRequest', () => {
+  test('carries the improver text and the original prompt, asks for a reply in the chat and tells the model to stop', () => {
+    const request = buildReplyAndStopRequest('MY TEXT', 'plan my launch')
+    expect(request.startsWith('MY TEXT')).toBe(true)
+    expect(request.endsWith('Original prompt:\nplan my launch')).toBe(true)
+    expect(request).toContain('language of the original prompt')
+    expect(request).toContain('deepened prompt')
+    expect(request).toMatch(/Then stop\. Do not carry out the task itself/)
+  })
+
+  test('a blank improver text falls back to the default', () => {
+    expect(buildReplyAndStopRequest('', 'x').startsWith(DEFAULT_IMPROVER_TEXT)).toBe(true)
   })
 })

@@ -6,7 +6,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Band, Settled } from '../types'
-import { buildRequest, describeFailure, parseReply } from './deepen'
+import { buildReplyAndStopRequest, buildRequest, describeFailure, parseReply } from './deepen'
 import type { Answers } from './deepen'
 
 export const PLUGIN = 'prompt-deepener'
@@ -68,18 +68,41 @@ export async function cancel($: EngineInterface): Promise<void> {
   if (current.kind !== 'deepening') return
   run.id += 1
   run.controller?.abort()
+  if (current.typed !== null) await $.prompt.fill({ text: current.typed, mode: 'replace' })
   await update($, band, (): Band => current.previous)
+}
+
+/** What the draft box says to a write that changes nothing: `ok`, or why it refuses (`no_composer`: threads, maybe desktop). */
+export async function probeFill($: EngineInterface): Promise<'ok' | 'no_composer' | 'dialog'> {
+  const box = await $.prompt.read()
+  const filled = await $.prompt.fill({ text: box.text, mode: 'replace', cursor: box.cursor })
+  if (filled.isFilled) return 'ok'
+  return filled.refusal === 'no_composer' ? 'no_composer' : 'dialog'
 }
 
 /** Improve: deepens the draft and puts the deepened prompt in its place. Nothing is sent. */
 export async function improve($: EngineInterface, improverText: string): Promise<void> {
-  const current = await read($, band)
-  if (current.kind === 'deepening') return
   const draft = (await $.prompt.read()).text
   if (draft.trim() === '') return
+  await startDeepening($, improverText, draft, null)
+}
 
+/**
+ * Deepens `text`. `typed` is what the person typed when `++` took it out of the box: put back if the
+ * deepening fails or is cancelled, so the retry is one Enter away; null when the text is still in the draft.
+ */
+export async function startDeepening($: EngineInterface, improverText: string, text: string, typed: string | null, isProbed = false): Promise<void> {
+  const current = await read($, band)
+  if (current.kind === 'deepening') return
   const previous = settled(current)
-  await update($, band, (): Band => ({ kind: 'deepening', text: draft, previous }))
+
+  // A box that takes no text (a claude.ai thread): the main model answers in the chat instead, and stops.
+  if (!isProbed && (await probeFill($)) === 'no_composer') {
+    await $.prompt.submit({ text: buildReplyAndStopRequest(improverText, text) })
+    return
+  }
+
+  await update($, band, (): Band => ({ kind: 'deepening', text, previous, typed }))
 
   // `$.model.fork` takes no abort signal, so a cancelled or timed-out deepening is left to finish and its result discarded;
   // only the plain-completion fallback is really aborted.
@@ -90,23 +113,40 @@ export async function improve($: EngineInterface, improverText: string): Promise
     (): Deepening => failure(`timed out after ${DEEPEN_TIMEOUT_MS / 1000} seconds`),
     () => new Promise<never>(() => {}),
   )
-  const result = await Promise.race([deepen($, improverText, draft, controller.signal), timeout])
+  const result = await Promise.race([deepen($, improverText, text, controller.signal), timeout])
   controller.abort()
   if (mine !== run.id) return
-  if (!result.isOk) return fail($, result.reason, previous)
+  if (!result.isOk) return fail($, result.reason, previous, typed)
 
+  const original = previous.kind === 'deepened' ? previous.original : text
   const filled = await $.prompt.fill({ text: result.deepenedPrompt, mode: 'replace' })
-  if (!filled.isFilled) return fail($, 'the draft box could not take the deepened prompt', previous)
+  // A refusal that names no cause counts as a dialog: the result is kept, never lost.
+  if (!filled.isFilled && filled.refusal === 'no_composer') return fail($, 'the draft box could not take the deepened prompt', previous, typed)
+  if (!filled.isFilled) $.ui.toast('The draft is blocked, probably by a dialog: close it, then press Put in draft.')
   await update($, band, (): Band => ({
     kind: 'deepened',
-    original: previous.kind === 'deepened' ? previous.original : draft,
+    original,
     answers: result.answers,
     count: previous.kind === 'deepened' ? previous.count + 1 : 1,
     deepenedPrompt: result.deepenedPrompt,
+    isInDraft: filled.isFilled,
   }))
 }
 
-async function fail($: EngineInterface, reason: string, previous: Settled): Promise<void> {
+/** Put in draft: the deepened prompt, once the dialog that held the keys is gone. */
+export async function putInDraft($: EngineInterface): Promise<void> {
+  const current = await read($, band)
+  if (current.kind !== 'deepened' || current.isInDraft) return
+  const filled = await $.prompt.fill({ text: current.deepenedPrompt, mode: 'replace' })
+  if (!filled.isFilled) {
+    $.ui.toast('The draft box still cannot take it: close any dialog and press Put in draft again.')
+    return
+  }
+  await update($, band, (): Band => ({ ...current, isInDraft: true }))
+}
+
+async function fail($: EngineInterface, reason: string, previous: Settled, typed: string | null): Promise<void> {
+  if (typed !== null) await $.prompt.fill({ text: typed, mode: 'replace' })
   await update($, band, (): Band => ({ kind: 'failed', reason, previous }))
   $.ui.toast(`Deepening failed: ${reason}. Your draft is unchanged.`)
 }
