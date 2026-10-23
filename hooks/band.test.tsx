@@ -351,6 +351,15 @@ describe('the ++ marker', () => {
     expect(await ui.find({ key: 'restore' })).toBeDefined()
   })
 
+  test('++ inside a project thread wake envelope is read like a typed one', async ($, on) => {
+    const w = world(on, { draft: '' })
+    const wake = `<wake reason="mention"><project id="x"><thread ts="t"><message trigger="true" from="human" id="m">++ what&#39;s a bloom filter?</message></thread></project></wake>`
+    const sent = await $.prompt.submit(typed(wake))
+    expect(sent).toMatchObject({ drop: expect.any(String) })
+    await settle()
+    expect(w.requests[0]!.endsWith("Original prompt:\nwhat's a bloom filter?")).toBe(true)
+  })
+
   test('++ with no space and with several lines is read the same way', async ($, on) => {
     const w = world(on, { draft: '' })
     await $.prompt.submit(typed('++plan\nmy launch'))

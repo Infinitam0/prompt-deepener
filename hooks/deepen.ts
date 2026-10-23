@@ -73,3 +73,25 @@ export function parseReply(reply: string): Parsed {
 export function describeFailure(reason: 'no-deepened-prompt' | 'wrong-shape'): string {
   return reason === 'no-deepened-prompt' ? 'the reply had no deepened prompt' : 'the reply was not four answers and a deepened prompt'
 }
+
+const ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" }
+const unescapeText = (s: string) => s.replace(/&(?:amp|lt|gt|quot|#39);/g, m => ENTITIES[m]!)
+const escapeText = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+export type Wrapped = { text: string; rewrap: (text: string) => string }
+
+/**
+ * A project thread hands the model the person's message inside a `<wake>` envelope, not as the bare text.
+ * Finds the triggering message in it so the `++` marker can be read, and rewraps a replacement into the same envelope.
+ */
+export function unwrapWake(raw: string): Wrapped | null {
+  if (!raw.trimStart().startsWith('<wake')) return null
+  const found = [...raw.matchAll(/(<message\b[^>]*\btrigger="true"[^>]*>)([\s\S]*?)(<\/message>)/g)].at(-1)
+  if (found === undefined) return null
+  const [whole, open, body, close] = found as unknown as [string, string, string, string]
+  const start = found.index!
+  return {
+    text: unescapeText(body),
+    rewrap: text => raw.slice(0, start) + open + escapeText(text) + close + raw.slice(start + whole.length),
+  }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DEFAULT_IMPROVER_TEXT, OUTPUT_FORMAT, buildReplyAndStopRequest, buildRequest, cutLines, describeFailure, parseReply } from './deepen'
+import { DEFAULT_IMPROVER_TEXT, OUTPUT_FORMAT, buildReplyAndStopRequest, buildRequest, cutLines, describeFailure, parseReply, unwrapWake } from './deepen'
 
 const reply = (answers: string[], prompt: string) =>
   `${answers.map((a, i) => `<answer-${i + 1}>${a}</answer-${i + 1}>`).join('\n')}\n<deepened-prompt>${prompt}</deepened-prompt>`
@@ -81,5 +81,18 @@ describe('buildReplyAndStopRequest', () => {
 
   test('a blank improver text falls back to the default', () => {
     expect(buildReplyAndStopRequest('', 'x').startsWith(DEFAULT_IMPROVER_TEXT)).toBe(true)
+  })
+})
+
+describe('unwrapWake', () => {
+  const wake = '<wake reason="mention"><thread><message trigger="true" id="1">++ it&#39;s a &lt;b&gt;</message></thread><system-note>keep</system-note></wake>'
+  test('finds the triggering message, unescaped, and rewraps a replacement into the same envelope', () => {
+    const w = unwrapWake(wake)!
+    expect(w.text).toBe("++ it's a <b>")
+    expect(w.rewrap('x < y')).toBe('<wake reason="mention"><thread><message trigger="true" id="1">x &lt; y</message></thread><system-note>keep</system-note></wake>')
+  })
+  test('leaves bare text and wakes without a triggering message alone', () => {
+    expect(unwrapWake('++ plain')).toBeNull()
+    expect(unwrapWake('<wake><message id="1">hi</message></wake>')).toBeNull()
   })
 })
