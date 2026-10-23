@@ -1,0 +1,18 @@
+{
+  "name": "prompt-deepener",
+  "version": "0.1.0",
+  "description": "Deepen a prompt before sending it: an Improve button (ctrl+x d) and a ++ marker run it through your improver text, show four answers, and put a deeper rewrite in the draft.",
+  "author": {
+    "name": "Sytze"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "improverText": {
+      "type": "string",
+      "title": "Improver text",
+      "description": "The instruction a prompt is run through when deepened. Default is the original deeper-not-bigger text.",
+      "default": "I want a deeper version of this task, not a bigger one. Before rewriting it: (1) say what a top professional in this field would do here that I'm not asking for; (2) name the rawest material they would start from instead of what has already been digested for me; (3) name the specific methods and tools they would use; (4) say what, other than you or me, would show the result is right. Then rewrite my prompt to ask for exactly that."
+    }
+  }
+}
