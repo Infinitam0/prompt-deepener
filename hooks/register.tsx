@@ -1,7 +1,7 @@
 import type { Register } from 'claude-code'
 
 import { DEFAULT_IMPROVER_TEXT } from './deepen'
-import { improve, readBand, reset } from './flow'
+import { improve, readBand, reset, restore } from './flow'
 
 /** Borrowed so the chord the person binds to it (ctrl+x d, see the README) presses Improve at the prompt. */
 const CHORD_ACTION = 'app:diffFileListDown'
@@ -34,15 +34,19 @@ export const register: Register = (on, options) => {
     if (state.kind === 'deepened') {
       return (
         <Box>
-          <Text key="status">{`deepened${state.count > 1 ? ` ×${state.count}` : ''} `}</Text>
+          <Text key="status">{`deepened ×${state.count} `}</Text>
           {improveButton('Deepen again')}
+          <Button key="restore" label="Restore original" onPress={() => restore($)} />
           <Text key="answers" dimColor>{`\n${state.answers.map((answer, i) => `${i + 1}. ${answer}`).join('\n')}`}</Text>
         </Box>
       )
     }
+    // A failed deepening leaves the draft as it was, so a deepening before it can still be restored.
+    const isRestorable = state.kind === 'failed' && state.previous.kind === 'deepened'
     return (
       <Box>
-        {improveButton('Improve')}
+        {improveButton(isRestorable ? 'Deepen again' : 'Improve')}
+        {isRestorable ? <Button key="restore" label="Restore original" onPress={() => restore($)} /> : null}
         {state.kind === 'failed' ? <Text key="failed" dimColor>{` failed: ${state.reason}`}</Text> : null}
       </Box>
     )

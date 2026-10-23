@@ -89,3 +89,15 @@ async function fail($: EngineInterface, reason: string, previous: Settled): Prom
 export async function reset($: EngineInterface): Promise<void> {
   await update($, band, (): Band => ({ kind: 'idle' }))
 }
+
+/** Restore original: puts the prompt as first typed back in the draft and forgets the deepening. */
+export async function restore($: EngineInterface): Promise<void> {
+  const current = settled(await read($, band))
+  if (current.kind !== 'deepened') return
+  const filled = await $.prompt.fill({ text: current.original, mode: 'replace' })
+  if (!filled.isFilled) {
+    $.ui.toast('Could not restore the original: the draft box did not take it.')
+    return
+  }
+  await update($, band, (): Band => ({ kind: 'idle' }))
+}

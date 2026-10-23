@@ -178,3 +178,62 @@ describe('Improve', () => {
     expect(JSON.stringify(button)).toContain('app:diffFileListDown')
   })
 })
+
+describe('Restore original', () => {
+  test('puts back the original prompt exactly as typed and returns the band to idle', async ($, on) => {
+    const w = world(on, { draft: '  fix the bug,  please\n' })
+    for (const surface of SURFACES) {
+      w.box.text = '  fix the bug,  please\n'
+      await $.prompt.submit(typed('reset'))
+      const ui = await $.ui.mount({ ...BAND, surface })
+      expect(await ui.find({ key: 'restore' })).toBeUndefined()
+      await ui.press({ key: 'improve' })
+      expect(w.box.text).toMatch(/^Audit the logs/)
+      await ui.press({ key: 'restore' })
+      expect(w.box.text).toBe('  fix the bug,  please\n')
+      expect((await ui.find({ key: 'improve' }))?.text).toBe('Improve')
+      expect(await ui.find({ key: 'restore' })).toBeUndefined()
+      await ui.unmount()
+    }
+  })
+
+  test('after a second deepening, restore goes back to the first original, and the band counts', async ($, on) => {
+    const w = world(on, { draft: 'first prompt' })
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await ui.press({ key: 'improve' })
+    expect(await ui.find({ type: 'Text', text: /deepened ×1/ })).toBeDefined()
+    w.box.text = `${w.box.text} Also the tests.`
+    await ui.press({ key: 'improve' })
+    expect(w.requests[1]!.endsWith('Also the tests.')).toBe(true)
+    expect(await ui.find({ type: 'Text', text: /deepened ×2/ })).toBeDefined()
+    await ui.press({ key: 'restore' })
+    expect(w.box.text).toBe('first prompt')
+  })
+
+  test('a failed second deepening keeps Restore available', async ($, on) => {
+    let n = 0
+    const w = world(on, {
+      draft: 'first prompt',
+      fork: () => (n++ === 0 ? { isAnswered: true, text: REPLY, usage: {} } : { isAnswered: false, reason: 'empty-reply', usage: {} }),
+    })
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await ui.press({ key: 'improve' })
+    await ui.press({ key: 'improve' })
+    expect(w.toasts.at(-1)).toMatch(/Deepening failed/)
+    expect(await ui.find({ key: 'restore' })).toBeDefined()
+    await ui.press({ key: 'restore' })
+    expect(w.box.text).toBe('first prompt')
+  })
+
+  test('after send, no Restore is offered', async ($, on) => {
+    world(on)
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    await ui.press({ key: 'improve' })
+    expect(await ui.find({ key: 'restore' })).toBeDefined()
+    await $.prompt.submit(typed('go'))
+    expect(await ui.find({ key: 'restore' })).toBeUndefined()
+  })
+})
