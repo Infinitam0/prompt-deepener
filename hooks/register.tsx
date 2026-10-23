@@ -1,7 +1,7 @@
 import type { Register } from 'claude-code'
 
 import { DEFAULT_IMPROVER_TEXT, buildReplyAndStopRequest } from './deepen'
-import { cancel, improve, probeFill, putInDraft, readBand, reset, restore, startDeepening } from './flow'
+import { cancel, detach, improve, probeFill, putInDraft, readBand, reset, restore, startDeepening } from './flow'
 
 /** Borrowed so the chord the person binds to it (ctrl+x d, see the README) presses Improve at the prompt. */
 const CHORD_ACTION = 'app:diffFileListDown'
@@ -20,7 +20,7 @@ export const register: Register = (on, options) => {
       // Where the box takes no text (a thread) the main model gets the request as this turn and stops after answering.
       if ((await probeFill($)) === 'no_composer') return next({ ...e, text: buildReplyAndStopRequest(improverText, text) })
       // Started unawaited: a hook that awaits a model call inside the turn's own chain can hang the session.
-      void startDeepening($, improverText, text, e.text, true)
+      detach($, startDeepening($, improverText, text, e.text, true))
       return { drop: 'Deepening your prompt…' }
     }
 
@@ -35,9 +35,9 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = $.ui.resolve(e)
 
     const improveButton = (label: string) => (
-      <Button key="improve" label={label} hotkey="d" action={CHORD_ACTION} onPress={() => void improve($, improverText)} />
+      <Button key="improve" label={label} hotkey="d" action={CHORD_ACTION} onPress={() => detach($, improve($, improverText))} />
     )
-    const restoreButton = <Button key="restore" label="Restore original" hotkey="r" onPress={() => void restore($)} />
+    const restoreButton = <Button key="restore" label="Restore original" hotkey="r" onPress={() => detach($, restore($))} />
 
     // Every press returns at once and lets the work run unawaited: a hook that outlives its ten-second budget is skipped,
     // and a deepening takes longer than that.
@@ -45,7 +45,7 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="row">
           <Text key="status">deepening… </Text>
-          <Button key="cancel" label="Cancel" hotkey="c" onPress={() => void cancel($)} />
+          <Button key="cancel" label="Cancel" hotkey="c" onPress={() => detach($, cancel($))} />
         </Box>
       )
     }
@@ -55,7 +55,7 @@ export const register: Register = (on, options) => {
           <Box flexDirection="row">
             <Text key="status">{`deepened ×${state.count} `}</Text>
             {improveButton('Deepen again')}
-            {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => void putInDraft($)} />}
+            {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => detach($, putInDraft($))} />}
             {restoreButton}
           </Box>
           {state.answers.map((answer, i) => (

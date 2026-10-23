@@ -15,6 +15,7 @@ Needs a signed-in `claude` (or the container's proxy auth) on PATH. Exit 0 when 
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -33,8 +34,24 @@ class Terminal:
         if os.name == 'nt':
             from winpty import PtyProcess
 
+            import queue
+            import threading
+
             self.child = PtyProcess.spawn(argv, cwd=cwd, env=env, dimensions=(ROWS, COLS))
             self.fd = None
+            self.chunks = queue.Queue()
+
+            def read_loop():
+                # winpty's read blocks, so a thread feeds a queue and pump() keeps its deadline
+                while True:
+                    try:
+                        chunk = self.child.read(4096)
+                    except Exception:
+                        return
+                    if chunk:
+                        self.chunks.put(chunk)
+
+            threading.Thread(target=read_loop, daemon=True).start()
         else:
             import fcntl
             import pty
@@ -43,8 +60,11 @@ class Terminal:
 
             self.pid, self.fd = pty.fork()
             if self.pid == 0:
-                os.chdir(cwd)
-                os.execvpe(argv[0], argv, env)
+                try:
+                    os.chdir(cwd)
+                    os.execvpe(argv[0], argv, env)
+                finally:
+                    os._exit(127)  # exec failed (claude not on PATH): never fall through into the parent's code
             fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack('HHHH', ROWS, COLS, 0, 0))
 
     def write(self, data: bytes):
@@ -58,11 +78,9 @@ class Terminal:
         while time.time() < end:
             if self.fd is None:
                 try:
-                    chunk = self.child.read(4096)
-                except EOFError:
-                    return
-                if chunk:
-                    self.stream.feed(chunk.encode('utf-8', 'replace'))
+                    self.stream.feed(self.chunks.get(timeout=0.2).encode('utf-8', 'replace'))
+                except Exception:
+                    pass
                 continue
             import select
 
@@ -89,6 +107,18 @@ class Terminal:
                 return True
         return False
 
+    def wait_idle(self, quiet: float, timeout: float) -> bool:
+        """True once the screen has not changed for `quiet` seconds."""
+        end, last, since = time.time() + timeout, self.text(), time.time()
+        while time.time() < end:
+            self.pump(0.5)
+            now = self.text()
+            if now != last:
+                last, since = now, time.time()
+            elif time.time() - since >= quiet:
+                return True
+        return False
+
     def kill(self):
         if self.fd is None:
             self.child.terminate(force=True)
@@ -108,9 +138,12 @@ def main() -> int:
     work = tempfile.mkdtemp(prefix='pd-e2e-work-')
     os.makedirs(os.path.join(home, '.claude'))
     source = os.path.expanduser('~/.claude.json')
-    cfg = json.load(open(source)) if os.path.exists(source) else {}
+    full = json.load(open(source)) if os.path.exists(source) else {}
+    cfg = {k: full[k] for k in ('oauthAccount', 'userID', 'machineID') if k in full}  # only what a fresh HOME needs to be signed in
     cfg.update({'hasCompletedOnboarding': True, 'theme': 'dark', 'projects': {work: {'hasTrustDialogAccepted': True, 'hasCompletedProjectOnboarding': True}}})
-    json.dump(cfg, open(os.path.join(home, '.claude.json'), 'w'))
+    fd = os.open(os.path.join(home, '.claude.json'), os.O_WRONLY | os.O_CREAT, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(cfg, f)
     json.dump({'bindings': [{'context': 'Global', 'bindings': {'ctrl+x d': 'app:diffFileListDown'}}]}, open(os.path.join(home, '.claude', 'keybindings.json'), 'w'))
 
     env = {k: v for k, v in os.environ.items() if k not in ('CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_REMOTE_SESSION_ID', 'WT_SESSION')}
@@ -144,14 +177,14 @@ def main() -> int:
         term.write(b'r')
         term.pump(2)
         check('B: Restore puts the original prompt back', term.draft() == original)
-        check('B: the band is idle again', '[ Improve ]' in term.text() and 'deepened' not in term.text())
+        check('B: the band is idle again', '[ Improve ]' in term.text() and 'deepened ×' not in term.text())
 
         # C. after a real turn, through fork
         term.write(b'\x15')  # clear the draft line
         term.write(b'say hi in one word')
         term.pump(0.5)
         term.write(b'\r')
-        term.pump(20)
+        check('C: the plain turn finished', term.wait_for('Hi', 60) and term.wait_idle(5, 90))
         term.write(original.encode())
         term.pump(1)
         term.write(CTRL_X + b'd')
@@ -162,6 +195,8 @@ def main() -> int:
         print('--- screen at the end ---')
         print(term.text()[-2500:])
         term.kill()
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
     return 1 if failed else 0
 
 

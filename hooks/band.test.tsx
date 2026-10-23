@@ -427,3 +427,54 @@ describe('when the draft box cannot be filled', () => {
     }
   })
 })
+
+describe('robustness', () => {
+  test('a model call that throws leaves the band usable, toasts, and puts a ++ text back', async ($, on) => {
+    const w = world(on, {
+      draft: '',
+      fork: () => {
+        throw new Error('socket closed')
+      },
+    })
+    await $.prompt.submit(typed('++ plan my launch'))
+    await settle()
+    expect(w.toasts.at(-1)).toMatch(/Deepening failed: unexpected error/)
+    expect(w.box.text).toBe('++ plan my launch')
+    const sent = await $.prompt.submit(typed('still sendable'))
+    expect(sent).toMatchObject({ text: 'still sendable' })
+  })
+
+  test('pressing Improve twice quickly starts one deepening', async ($, on) => {
+    const gate = held()
+    const w = world(on, { fork: () => gate.promise })
+    mock.clock(on)
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const first = ui.press({ key: 'improve' })
+    const second = ui.press({ key: 'improve' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(w.requests).toHaveLength(1)
+    gate.release({ isAnswered: true, text: REPLY, usage: {} })
+    await Promise.all([first, second])
+    await settle()
+    expect(w.box.text).toMatch(/^Audit the logs/)
+  })
+
+  test('after Cancel a new deepening can start at once', async ($, on) => {
+    const gate = held()
+    const w = world(on, { fork: () => gate.promise })
+    mock.clock(on)
+    await $.prompt.submit(typed('reset'))
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const first = ui.press({ key: 'improve' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await ui.press({ key: 'cancel' })
+    const second = ui.press({ key: 'improve' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(w.requests).toHaveLength(2)
+    gate.release({ isAnswered: true, text: REPLY, usage: {} })
+    await Promise.all([first, second])
+    await settle()
+    expect(w.box.text).toMatch(/^Audit the logs/)
+  })
+})

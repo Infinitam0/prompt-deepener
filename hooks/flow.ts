@@ -60,13 +60,14 @@ function settled(current: Band): Settled {
 const DEEPEN_TIMEOUT_MS = 90_000
 
 /** The deepening in flight: which one counts, and the signal that stops its timer and its completion. */
-const run = { id: 0, controller: null as AbortController | null }
+const run = { id: 0, active: null as number | null, controller: null as AbortController | null }
 
 /** Cancel: the band goes back at once and the draft is as it was; a result arriving later changes nothing. */
 export async function cancel($: EngineInterface): Promise<void> {
   const current = await read($, band)
   if (current.kind !== 'deepening') return
   run.id += 1
+  run.active = null
   run.controller?.abort()
   if (current.typed !== null) await $.prompt.fill({ text: current.typed, mode: 'replace' })
   await update($, band, (): Band => current.previous)
@@ -92,6 +93,23 @@ export async function improve($: EngineInterface, improverText: string): Promise
  * deepening fails or is cancelled, so the retry is one Enter away; null when the text is still in the draft.
  */
 export async function startDeepening($: EngineInterface, improverText: string, text: string, typed: string | null, isProbed = false): Promise<void> {
+  // Claimed before the first await: presses return at once, so a second press must find this one running.
+  if (run.active !== null) return
+  const mine = ++run.id
+  run.active = mine
+  try {
+    await deepenOnce($, improverText, text, typed, isProbed, mine)
+  } catch (error) {
+    // Whatever threw, the band must not stay at `deepening` and a taken-out `++` text must come back.
+    const current = await read($, band)
+    const previous = settled(current)
+    await fail($, `unexpected error: ${String(error)}`, previous, typed)
+  } finally {
+    if (run.active === mine) run.active = null
+  }
+}
+
+async function deepenOnce($: EngineInterface, improverText: string, text: string, typed: string | null, isProbed: boolean, mine: number): Promise<void> {
   const current = await read($, band)
   if (current.kind === 'deepening') return
   const previous = settled(current)
@@ -106,15 +124,18 @@ export async function startDeepening($: EngineInterface, improverText: string, t
 
   // `$.model.fork` takes no abort signal, so a cancelled or timed-out deepening is left to finish and its result discarded;
   // only the plain-completion fallback is really aborted.
-  const mine = ++run.id
   const controller = new AbortController()
   run.controller = controller
   const timeout = $.clock.sleep(DEEPEN_TIMEOUT_MS, { signal: controller.signal }).then(
     (): Deepening => failure(`timed out after ${DEEPEN_TIMEOUT_MS / 1000} seconds`),
     () => new Promise<never>(() => {}),
   )
-  const result = await Promise.race([deepen($, improverText, text, controller.signal), timeout])
-  controller.abort()
+  let result: Deepening
+  try {
+    result = await Promise.race([deepen($, improverText, text, controller.signal), timeout])
+  } finally {
+    controller.abort()
+  }
   if (mine !== run.id) return
   if (!result.isOk) return fail($, result.reason, previous, typed)
 
@@ -166,4 +187,11 @@ export async function restore($: EngineInterface): Promise<void> {
     return
   }
   await update($, band, (): Band => ({ kind: 'idle' }))
+}
+
+/** Runs a press's work unawaited, so the press returns at once; a failure becomes a toast and never an unhandled rejection. */
+export function detach($: EngineInterface, work: Promise<void>): void {
+  work.catch((error: unknown) => {
+    $.ui.toast(`Prompt deepener: ${String(error)}`)
+  })
 }
