@@ -75,8 +75,9 @@ describe('Improve', () => {
       expect((await ui.find({ key: 'improve' }))?.text).toBe('Improve')
       await ui.press({ key: 'improve' })
       expect(w.box.text).toMatch(/^Audit the logs/)
-      const answers = (await ui.find({ type: 'Text', text: /ship the audit/ }))?.text ?? ''
-      for (const part of ['1. ship the audit', '2. raw logs', '3. grep and awk', "4. the customer's own numbers"]) expect(answers).toContain(part)
+      for (const part of ['1. ship the audit', '2. raw logs', '3. grep and awk', "4. the customer's own numbers"]) {
+        expect((await ui.find({ type: 'Text', text: part }))?.text).toBe(part)
+      }
       await ui.unmount()
     }
   })

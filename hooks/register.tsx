@@ -35,34 +35,41 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = $.ui.resolve(e)
 
     const improveButton = (label: string) => (
-      <Button key="improve" label={label} hotkey="d" action={CHORD_ACTION} onPress={() => improve($, improverText)} />
+      <Button key="improve" label={label} hotkey="d" action={CHORD_ACTION} onPress={() => void improve($, improverText)} />
     )
+    const restoreButton = <Button key="restore" label="Restore original" hotkey="r" onPress={() => void restore($)} />
 
+    // Every press returns at once and lets the work run unawaited: a hook that outlives its ten-second budget is skipped,
+    // and a deepening takes longer than that.
     if (state.kind === 'deepening') {
       return (
-        <Box>
+        <Box flexDirection="row">
           <Text key="status">deepening… </Text>
-          <Button key="cancel" label="Cancel" onPress={() => cancel($)} />
+          <Button key="cancel" label="Cancel" hotkey="c" onPress={() => void cancel($)} />
         </Box>
       )
     }
     if (state.kind === 'deepened') {
       return (
-        <Box>
-          <Text key="status">{`deepened ×${state.count} `}</Text>
-          {improveButton('Deepen again')}
-          {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => putInDraft($)} />}
-          <Button key="restore" label="Restore original" onPress={() => restore($)} />
-          <Text key="answers" dimColor>{`\n${state.answers.map((answer, i) => `${i + 1}. ${answer}`).join('\n')}`}</Text>
+        <Box flexDirection="column">
+          <Box flexDirection="row">
+            <Text key="status">{`deepened ×${state.count} `}</Text>
+            {improveButton('Deepen again')}
+            {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => void putInDraft($)} />}
+            {restoreButton}
+          </Box>
+          {state.answers.map((answer, i) => (
+            <Text key={`answer-${i + 1}`} dimColor>{`${i + 1}. ${answer}`}</Text>
+          ))}
         </Box>
       )
     }
     // A failed deepening leaves the draft as it was, so a deepening before it can still be restored.
     const isRestorable = state.kind === 'failed' && state.previous.kind === 'deepened'
     return (
-      <Box>
+      <Box flexDirection="row">
         {improveButton(isRestorable ? 'Deepen again' : 'Improve')}
-        {isRestorable ? <Button key="restore" label="Restore original" onPress={() => restore($)} /> : null}
+        {isRestorable ? restoreButton : null}
         {state.kind === 'failed' ? <Text key="failed" dimColor>{` failed: ${state.reason}`}</Text> : null}
       </Box>
     )
