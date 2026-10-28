@@ -1,6 +1,6 @@
 {
   "name": "prompt-deepener",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deepen a prompt before sending it: an Improve button (ctrl+x d) and a ++ marker run it through your improver text, show four answers, and put a deeper rewrite in the draft.",
   "author": {
     "name": "Sytze"
