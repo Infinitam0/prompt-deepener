@@ -62,6 +62,11 @@ function world(on: On, opts: Opts = {}) {
   })
   on('ui.log', () => ({ value: undefined }))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
+  // The bands of the mods beneath this one
+  on('ui.render', ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+    return <Text>others</Text>
+  })
   return { box, requests, completions, toasts, fills, signals }
 }
 
@@ -164,12 +169,23 @@ describe('Improve', () => {
     expect((await ui.find({ key: 'improve' }))?.text).toBe('Improve')
   })
 
+  test('the bands of other mods still draw, under this one, in every state', async ($, on) => {
+    const w = world(on)
+    for (const surface of SURFACES) {
+      w.box.text = 'fix the bug'
+      await $.prompt.submit(typed('reset'))
+      const ui = await $.ui.mount({ ...BAND, surface })
+      expect(await ui.find({ key: 'improve' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /others/ })).toBeDefined()
+      await ui.press({ key: 'improve' })
+      expect(await ui.find({ key: 'restore' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /others/ })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
   test('a survey keeps the band', async ($, on) => {
     world(on)
-    on('ui.render', ($$, e) => {
-      const { Text } = $$.ui.resolve(e)
-      return <Text>others</Text>
-    })
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, hasSurvey: true } })
     expect(await ui.find({ key: 'improve' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /others/ })).toBeDefined()

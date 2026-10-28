@@ -1,10 +1,56 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register, RenderInput } from 'claude-code'
 
 import { DEFAULT_IMPROVER_TEXT, buildReplyAndStopRequest, unwrapWake } from './deepen'
 import { cancel, detach, improve, probeFill, putInDraft, readBand, reset, restore, startDeepening } from './flow'
 
 /** Borrowed so the chord the person binds to it (ctrl+x d, see the README) presses Improve at the prompt. */
 const CHORD_ACTION = 'app:diffFileListDown'
+
+/** This mod's own band: Improve, or the state of a deepening. */
+async function drawBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, improverText: string) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const state = await readBand($)
+
+  const improveButton = (label: string) => (
+    <Button key="improve" label={label} hotkey="d" action={CHORD_ACTION} onPress={() => detach($, improve($, improverText))} />
+  )
+  const restoreButton = <Button key="restore" label="Restore original" hotkey="r" onPress={() => detach($, restore($))} />
+
+  // Every press returns at once and lets the work run unawaited: a hook that outlives its ten-second budget is skipped,
+  // and a deepening takes longer than that.
+  if (state.kind === 'deepening') {
+    return (
+      <Box flexDirection="row">
+        <Text key="status">deepening… </Text>
+        <Button key="cancel" label="Cancel" hotkey="c" onPress={() => detach($, cancel($))} />
+      </Box>
+    )
+  }
+  if (state.kind === 'deepened') {
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          <Text key="status">{`deepened ×${state.count} `}</Text>
+          {improveButton('Deepen again')}
+          {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => detach($, putInDraft($))} />}
+          {restoreButton}
+        </Box>
+        {state.answers.map((answer, i) => (
+          <Text key={`answer-${i + 1}`} dimColor>{`${i + 1}. ${answer}`}</Text>
+        ))}
+      </Box>
+    )
+  }
+  // A failed deepening leaves the draft as it was, so a deepening before it can still be restored.
+  const isRestorable = state.kind === 'failed' && state.previous.kind === 'deepened'
+  return (
+    <Box flexDirection="row">
+      {improveButton(isRestorable ? 'Deepen again' : 'Improve')}
+      {isRestorable ? restoreButton : null}
+      {state.kind === 'failed' ? <Text key="failed" dimColor>{` failed: ${state.reason}`}</Text> : null}
+    </Box>
+  )
+}
 
 export const register: Register = (on, options) => {
   const improverText = typeof options.improverText === 'string' && options.improverText.trim() !== '' ? options.improverText : DEFAULT_IMPROVER_TEXT
@@ -34,49 +80,16 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // A survey keeps the band to itself.
+  // A survey keeps the band to itself. The bands of other mods draw under this one.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const state = await readBand($)
-    const { Box, Text, Button } = $.ui.resolve(e)
-
-    const improveButton = (label: string) => (
-      <Button key="improve" label={label} hotkey="d" action={CHORD_ACTION} onPress={() => detach($, improve($, improverText))} />
-    )
-    const restoreButton = <Button key="restore" label="Restore original" hotkey="r" onPress={() => detach($, restore($))} />
-
-    // Every press returns at once and lets the work run unawaited: a hook that outlives its ten-second budget is skipped,
-    // and a deepening takes longer than that.
-    if (state.kind === 'deepening') {
-      return (
-        <Box flexDirection="row">
-          <Text key="status">deepening… </Text>
-          <Button key="cancel" label="Cancel" hotkey="c" onPress={() => detach($, cancel($))} />
-        </Box>
-      )
-    }
-    if (state.kind === 'deepened') {
-      return (
-        <Box flexDirection="column">
-          <Box flexDirection="row">
-            <Text key="status">{`deepened ×${state.count} `}</Text>
-            {improveButton('Deepen again')}
-            {state.isInDraft ? null : <Button key="put" label="Put in draft" onPress={() => detach($, putInDraft($))} />}
-            {restoreButton}
-          </Box>
-          {state.answers.map((answer, i) => (
-            <Text key={`answer-${i + 1}`} dimColor>{`${i + 1}. ${answer}`}</Text>
-          ))}
-        </Box>
-      )
-    }
-    // A failed deepening leaves the draft as it was, so a deepening before it can still be restored.
-    const isRestorable = state.kind === 'failed' && state.previous.kind === 'deepened'
+    const { Box } = $.ui.resolve(e)
+    const band = await drawBand($, e, improverText)
+    const below = await next(e)
     return (
-      <Box flexDirection="row">
-        {improveButton(isRestorable ? 'Deepen again' : 'Improve')}
-        {isRestorable ? restoreButton : null}
-        {state.kind === 'failed' ? <Text key="failed" dimColor>{` failed: ${state.reason}`}</Text> : null}
+      <Box flexDirection="column">
+        {band}
+        {below}
       </Box>
     )
   })
